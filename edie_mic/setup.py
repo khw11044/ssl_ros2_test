@@ -27,6 +27,7 @@ setup(
     entry_points={
         'console_scripts': [
             'mic_node = edie_mic.mic_main:main',
+            'save_audio = edie_mic.save_audio:main',
         ],
     },
 )

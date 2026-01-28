@@ -1,5 +1,11 @@
 ssl_node:
   ros__parameters:
+    pub:
+      pub_ssl_data: '/edie/ssl/data'
+    sub:
+      sub_audio_raw_data: '/edie/audio/raw_data'
+
+  ssl__parameters:
     # 공통
     rate: 16000
     channels: 2

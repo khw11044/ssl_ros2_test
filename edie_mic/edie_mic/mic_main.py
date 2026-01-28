@@ -4,6 +4,7 @@ EDIE Microphone Node - Raw audio data streaming over ROS2
 """
 import sys
 import os
+import yaml
 
 pkg_path = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, pkg_path)
@@ -38,22 +39,44 @@ class MicrophoneNode(Node):
     def __init__(self):
         super().__init__('microphone_node')
 
-        # Declare parameters
-        self.declare_parameters(
-            namespace='',
-            parameters=[
-                ('rate', 16000),
-                ('channels', 2),
-                ('frame_size', 320),
-                ('topic', '/edie/audio/raw_data'),
-            ]
-        )
+        # config 파일 경로 파라미터 받기
+        self.declare_parameter('config_file', '')
+        config_file = self.get_parameter('config_file').value
 
-        # Get parameters
+        if not config_file:
+            config_file = os.path.join(os.path.dirname(__file__), 'config/audio_config.yaml')
+            self.get_logger().info(f'Using default config file: {config_file}')
+
+        # yaml 파일 로드
+        try:
+            with open(config_file, 'r') as f:
+                config_data = yaml.safe_load(f)
+                if 'microphone_node' in config_data:
+                    ros_params = config_data['microphone_node'].get('ros__parameters', {})
+                    self.config_pub = ros_params.get('pub', {})
+                    self.config_audio = config_data['microphone_node'].get('audio__parameters', {})
+                else:
+                    self.config_pub = {}
+                    self.config_audio = {}
+                    self.get_logger().error('Invalid config file format')
+                    return
+
+            self.get_logger().info(f'Loaded config from: {config_file}')
+        except Exception as e:
+            self.get_logger().error(f'Failed to load config file: {str(e)}')
+            return
+
+        # 파라미터 선언
+        self.declare_parameter('topic', self.config_pub.get('pub_audio_raw_data', '/edie/audio/raw_data'))
+        self.declare_parameter('rate', self.config_audio.get('rate', 16000))
+        self.declare_parameter('channels', self.config_audio.get('channels', 2))
+        self.declare_parameter('frame_size', self.config_audio.get('frame_size', 320))
+
+        # 파라미터 가져오기
+        self.topic = self.get_parameter('topic').value
         self.rate = self.get_parameter('rate').value
         self.channels = self.get_parameter('channels').value
         self.frame_size = self.get_parameter('frame_size').value
-        self.topic = self.get_parameter('topic').value
 
         # QoS profile for real-time audio streaming
         qos_profile = QoSProfile(
@@ -70,7 +93,7 @@ class MicrophoneNode(Node):
             qos_profile
         )
 
-        # Create Source (same as ssl_node)
+        # Create Source
         self.src = Source(
             rate=self.rate,
             frames_size=self.frame_size,

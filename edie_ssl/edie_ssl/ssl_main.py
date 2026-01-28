@@ -3,9 +3,12 @@ ROS2 Sound Source Localization Node
 GCC-PHAT + SRP-PHAT 알고리즘을 사용한 음원 방향 추정
 
 각도 범위: -90 ~ +90 (가운데 0, 음수=왼쪽, 양수=오른쪽)
+
+오디오 데이터는 /edie/audio/raw_data 토픽에서 구독
 """
 import sys
 import os
+import yaml
 
 # 패키지 내부 모듈 경로 추가
 pkg_path = os.path.dirname(os.path.abspath(__file__))
@@ -14,9 +17,11 @@ sys.path.insert(0, pkg_path)
 import numpy as np
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPolicy
+from std_msgs.msg import UInt8MultiArray
 from edie_ssl_msgs.msg import SSLResult
 
-from microphone.source import Source
+from microphone.element import Element
 from utils.estimator import GCCEstimator, SRPEstimator
 
 
@@ -33,33 +38,72 @@ def angle_to_direction(angle: float) -> str:
         return "Front"
 
 
+class ROS2SubscriberSource(Element):
+    """Source element that receives audio data from ROS2 topic"""
+
+    def __init__(self):
+        super().__init__()
+
+    def put(self, data):
+        """Receive audio data from topic and forward to linked elements"""
+        super().put(data)
+
+
 class SSLNode(Node):
     def __init__(self):
         super().__init__('ssl_node')
 
-        # 파라미터 선언 및 로드
-        self.declare_parameters(
-            namespace='',
-            parameters=[
-                ('rate', 16000),
-                ('channels', 2),
-                ('frame_size', 320),
-                ('mic_distance', 0.155),
-                ('publish_rate', 20.0),
-                ('gcc_chunk', 20),
-                ('db_threshold', 6.0),
-                ('dir_threshold', 2.0),
-                ('history_size', 50),
-                ('cooldown', 0.5),
-                ('srp_chunk', 10),
-                ('nfft', 512),
-                ('n_grid', 18),
-                ('alpha', 0.3),
-                ('confidence_threshold', 1.5),
-            ]
-        )
+        # config 파일 경로 파라미터 받기
+        self.declare_parameter('config_file', '')
+        config_file = self.get_parameter('config_file').value
+
+        if not config_file:
+            config_file = os.path.join(os.path.dirname(__file__), 'config/ssl_config.yaml')
+            self.get_logger().info(f'Using default config file: {config_file}')
+
+        # yaml 파일 로드
+        try:
+            with open(config_file, 'r') as f:
+                config_data = yaml.safe_load(f)
+                if 'ssl_node' in config_data:
+                    ros_params = config_data['ssl_node'].get('ros__parameters', {})
+                    self.config_sub = ros_params.get('sub', {})
+                    self.config_pub = ros_params.get('pub', {})
+                    self.config_ssl = config_data['ssl_node'].get('ssl__parameters', {})
+                else:
+                    self.config_sub = {}
+                    self.config_pub = {}
+                    self.config_ssl = {}
+                    self.get_logger().error('Invalid config file format')
+                    return
+
+            self.get_logger().info(f'Loaded config from: {config_file}')
+        except Exception as e:
+            self.get_logger().error(f'Failed to load config file: {str(e)}')
+            return
+
+        # 파라미터 선언
+        self.declare_parameter('sub_audio_raw_data', self.config_sub.get('sub_audio_raw_data', '/edie/audio/raw_data'))
+        self.declare_parameter('pub_ssl_data', self.config_pub.get('pub_ssl_data', '/edie/ssl/data'))
+        self.declare_parameter('rate', self.config_ssl.get('rate', 16000))
+        self.declare_parameter('channels', self.config_ssl.get('channels', 2))
+        self.declare_parameter('frame_size', self.config_ssl.get('frame_size', 320))
+        self.declare_parameter('mic_distance', self.config_ssl.get('mic_distance', 0.155))
+        self.declare_parameter('publish_rate', self.config_ssl.get('publish_rate', 20.0))
+        self.declare_parameter('gcc_chunk', self.config_ssl.get('gcc_chunk', 20))
+        self.declare_parameter('db_threshold', self.config_ssl.get('db_threshold', 6.0))
+        self.declare_parameter('dir_threshold', self.config_ssl.get('dir_threshold', 2.0))
+        self.declare_parameter('history_size', self.config_ssl.get('history_size', 50))
+        self.declare_parameter('cooldown', self.config_ssl.get('cooldown', 0.5))
+        self.declare_parameter('srp_chunk', self.config_ssl.get('srp_chunk', 10))
+        self.declare_parameter('nfft', self.config_ssl.get('nfft', 512))
+        self.declare_parameter('n_grid', self.config_ssl.get('n_grid', 18))
+        self.declare_parameter('alpha', self.config_ssl.get('alpha', 0.3))
+        self.declare_parameter('confidence_threshold', self.config_ssl.get('confidence_threshold', 1.5))
 
         # 파라미터 가져오기
+        self.sub_audio_raw_data = self.get_parameter('sub_audio_raw_data').value
+        self.pub_ssl_data = self.get_parameter('pub_ssl_data').value
         self.rate = self.get_parameter('rate').value
         self.channels = self.get_parameter('channels').value
         self.frame_size = self.get_parameter('frame_size').value
@@ -81,12 +125,8 @@ class SSLNode(Node):
         # 최대 TDOA 계산
         max_tdoa = self.mic_distance / SOUND_SPEED
 
-        # Source 생성
-        self.src = Source(
-            rate=self.rate,
-            frames_size=self.frame_size,
-            channels=self.channels
-        )
+        # ROS2 Subscriber Source 생성 (기존 Source 대체)
+        self.src = ROS2SubscriberSource()
 
         # GCC Estimator 생성
         self.gcc_estimator = GCCEstimator(
@@ -114,15 +154,28 @@ class SSLNode(Node):
         self.src.link(self.gcc_estimator)
         self.src.link(self.srp_estimator)
 
+        # QoS profile (match with mic_node)
+        qos_profile = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            durability=DurabilityPolicy.VOLATILE,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=10
+        )
+
+        # Audio topic subscriber
+        self.subscription = self.create_subscription(
+            UInt8MultiArray,
+            self.sub_audio_raw_data,
+            self.audio_callback,
+            qos_profile
+        )
+
         # Publisher 생성
-        self.publisher = self.create_publisher(SSLResult, 'ssl_result', 10)
+        self.publisher = self.create_publisher(SSLResult, self.pub_ssl_data, 10)
 
         # Timer 생성
         timer_period = 1.0 / self.publish_rate
         self.timer = self.create_timer(timer_period, self.timer_callback)
-
-        # 마이크 시작
-        self.src.recursive_start()
 
         # 로그 출력
         self.get_logger().info('=' * 60)
@@ -131,8 +184,14 @@ class SSLNode(Node):
         self.get_logger().info(f'Rate: {self.rate}Hz, Channels: {self.channels}')
         self.get_logger().info(f'Mic distance: {self.mic_distance * 100}cm')
         self.get_logger().info(f'Publish rate: {self.publish_rate}Hz')
+        self.get_logger().info(f'Audio topic: {self.sub_audio_raw_data}')
         self.get_logger().info(f'Angle: -90=Left, 0=Front, +90=Right')
         self.get_logger().info('=' * 60)
+
+    def audio_callback(self, msg):
+        """오디오 토픽 콜백 - 데이터를 파이프라인에 전달"""
+        audio_data = bytes(msg.data)
+        self.src.put(audio_data)
 
     def timer_callback(self):
         """주기적으로 DOA 결과 publish"""
@@ -195,7 +254,6 @@ class SSLNode(Node):
     def destroy_node(self):
         """노드 종료 시 정리"""
         self.get_logger().info('Stopping SSL Node...')
-        self.src.recursive_stop()
         super().destroy_node()
 
 
