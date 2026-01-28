@@ -2,9 +2,6 @@
 """
 Audio Save Node - Subscribe to audio topic and save to WAV files
 Saves: left.wav, right.wav, total.wav
-
-ros2 run edie_mic save_audio 5
-
 """
 import sys
 import wave
@@ -16,14 +13,14 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPo
 from std_msgs.msg import UInt8MultiArray
 
 
-class AudioSaveNode(Node):
-    """ROS2 Node for saving audio data from topic to WAV files"""
+class AeiRobotDenosing(Node):
+    """ROS2 Node for saving denoising audio data from topic to WAV files"""
 
     def __init__(self, duration: float):
         super().__init__('audio_save_node')
 
         self.duration = duration
-        self.rate = 48000
+        self.rate = 16000
         self.channels = 2
         self.sample_width = 2  # 16bit = 2bytes
 
@@ -76,34 +73,9 @@ class AudioSaveNode(Node):
         audio_bytes = b''.join(self.audio_data)
         audio_array = np.frombuffer(audio_bytes, dtype=np.int16)
 
-        # Extract channels (interleaved stereo: L R L R L R ...)
-        left_ch = audio_array[0::2]   # Even indices = Left
-        right_ch = audio_array[1::2]  # Odd indices = Right
 
-        # Save left.wav (mono)
-        with wave.open('left.wav', 'wb') as wf:
-            wf.setnchannels(1)
-            wf.setsampwidth(self.sample_width)
-            wf.setframerate(self.rate)
-            wf.writeframes(left_ch.tobytes())
-
-        # Save right.wav (mono)
-        with wave.open('right.wav', 'wb') as wf:
-            wf.setnchannels(1)
-            wf.setsampwidth(self.sample_width)
-            wf.setframerate(self.rate)
-            wf.writeframes(right_ch.tobytes())
-
-        # Save total.wav (stereo)
-        with wave.open('total.wav', 'wb') as wf:
-            wf.setnchannels(self.channels)
-            wf.setsampwidth(self.sample_width)
-            wf.setframerate(self.rate)
-            wf.writeframes(audio_bytes)
-
-        duration_actual = len(left_ch) / self.rate
         self.get_logger().info('=' * 50)
-        self.get_logger().info(f'Saved: left.wav, right.wav, total.wav')
+        self.get_logger().info(f'Saved: total.wav')
         self.get_logger().info(f'Actual duration: {duration_actual:.2f} seconds')
         self.get_logger().info('=' * 50)
 
@@ -126,7 +98,7 @@ def main(args=None):
         print(f'Error: Invalid duration "{sys.argv[1]}"')
         return
 
-    node = AudioSaveNode(duration)
+    node = AeiRobotDenosing(duration)
 
     try:
         rclpy.spin(node)

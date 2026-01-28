@@ -39,12 +39,13 @@ class Source(Element):
             width = pyaudio.paInt8
 
         # Search device by name
+        device_index = None
         if device_name:
             for i in range(self.pyaudio_instance.get_device_count()):
                 dev = self.pyaudio_instance.get_device_info_by_index(i)
-                name = dev['name'].encode('utf-8')
+                name = dev['name']
                 logger.info('{}:{} with {} input channels'.format(i, name, dev['maxInputChannels']))
-                if name.find(device_name) >= 0:
+                if device_name in name:
                     logger.info('Use {}'.format(name))
                     device_index = i
                     break

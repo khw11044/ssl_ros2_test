@@ -68,9 +68,9 @@ class MicrophoneNode(Node):
 
         # 파라미터 선언
         self.declare_parameter('topic', self.config_pub.get('pub_audio_raw_data', '/edie/audio/raw_data'))
-        self.declare_parameter('rate', self.config_audio.get('rate', 16000))
+        self.declare_parameter('rate', self.config_audio.get('rate', 48000))
         self.declare_parameter('channels', self.config_audio.get('channels', 2))
-        self.declare_parameter('frame_size', self.config_audio.get('frame_size', 320))
+        self.declare_parameter('frame_size', self.config_audio.get('frame_size', 480))
 
         # 파라미터 가져오기
         self.topic = self.get_parameter('topic').value

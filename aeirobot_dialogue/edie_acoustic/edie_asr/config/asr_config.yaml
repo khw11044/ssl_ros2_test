@@ -1,0 +1,28 @@
+ssl_node:
+  ros__parameters:
+    pub:
+      pub_ssl_data: '/edie/ssl/data'
+    sub:
+      sub_audio_raw_data: '/edie/audio/raw_data'
+
+  ssl__parameters:
+    # 공통
+    rate: 16000
+    channels: 2
+    frame_size: 320
+    mic_distance: 0.155
+    publish_rate: 20.0  # Hz
+    
+    # GCC 파라미터
+    gcc_chunk: 20
+    db_threshold: 6.0
+    dir_threshold: 2.0
+    history_size: 50
+    cooldown: 0.5
+    
+    # SRP 파라미터
+    srp_chunk: 10
+    nfft: 512
+    n_grid: 18
+    alpha: 0.3
+    confidence_threshold: 1.5
