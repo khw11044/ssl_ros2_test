@@ -1,0 +1,21 @@
+aeirobot_asr:
+  ros__parameters:
+    pub:
+      pub_audio_raw_data: '/edie/audio/raw_data'
+      pub_audio_info: '/edie/audio/info'
+
+  audio__parameters:
+    # 오디오 설정
+    sample_rate: 48000
+    default_device: "default"
+    channels: 2
+    sample_format: "float32le"
+    bits_per_sample: 32
+    # 100Hz publish를 위한 chunk 크기 (48000 / 100 = 480)
+    chunk_size: 480
+
+  qos__parameters:
+    # 실시간 오디오 스트리밍을 위한 QoS 설정
+    reliability: "best_effort"
+    durability: "volatile"
+    history_depth: 10
