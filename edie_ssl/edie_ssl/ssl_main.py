@@ -58,7 +58,7 @@ class SSLNode(Node):
         config_file = self.get_parameter('config_file').value
 
         if not config_file:
-            config_file = os.path.join(os.path.dirname(__file__), 'config/ssl_config.yaml')
+            config_file = os.path.join(os.path.dirname(__file__), '../config/ssl_config.yaml')
             self.get_logger().info(f'Using default config file: {config_file}')
 
         # yaml 파일 로드

@@ -2,6 +2,7 @@ microphone_node:
   ros__parameters:
     pub:
       pub_audio_raw_data: '/edie/audio/raw_data'
+      pub_audio_df_data: '/edie/audio/df_data'
 
   audio__parameters:
     # 오디오 설정

@@ -26,11 +26,9 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'final_node = edie_mic.final_main:main',
             'mic_node = edie_mic.mic_main:main',
-            'df_node = edie_mic.df_main:main',
-            'save_audio = edie_mic.save_audio:main',
-            'save_audio_1ch = edie_mic.save_audio_1ch:main',
+            'save_audio_raw = edie_mic.save_audio_raw:main',
+            'save_audio_df = edie_mic.save_audio_df:main',
         ],
     },
 )
