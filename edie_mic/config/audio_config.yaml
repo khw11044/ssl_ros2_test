@@ -9,3 +9,8 @@ microphone_node:
     rate: 48000
     channels: 2
     frame_size: 480
+    filter:
+        name: fir_lowpass  # fir_lowpass, fir_highpass, fir_notch, fir_bandpass
+        cutoff: 2000       # 차단 주파수 (Hz)
+        cutoff_high: 3000  # fir_bandpass 사용 시 상한 주파수
+        taps: 511          # 필터 탭 수 (홀수, 클수록 급격한 차단)

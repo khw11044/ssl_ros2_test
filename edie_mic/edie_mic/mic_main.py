@@ -3,6 +3,7 @@
 EDIE Unified Microphone Node - Raw + DeepFilter audio streaming over ROS2
 Publishes both raw audio data and DeepFilter noise-reduced audio simultaneously
 Uses parecord to specify exact PulseAudio sources for each stream
+Supports FIR filtering for noise reduction (linear phase, no phase distortion)
 """
 import sys
 import os
@@ -11,6 +12,7 @@ pkg_path = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, pkg_path)
 
 import yaml
+import numpy as np
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPolicy
@@ -19,10 +21,54 @@ from std_msgs.msg import UInt8MultiArray
 # Use parecord to specify exact PulseAudio source names (no device conflicts)
 from microphone.mic_parecord import Source as PaRecordSource
 from microphone.element import Element
+from filter_engine.GeneralFilters import FIRFilter
 
 # PulseAudio source names (from: pactl list sources short)
 RAW_DEVICE = 'alsa_input.platform-rt5651-sound.stereo-fallback'  # Hardware mic (2ch, s24-32le)
 DF_DEVICE = 'DeepFilterMic'  # DeepFilter virtual source (1ch, float32)
+
+
+class FIRFilterElement(Element):
+    """Element that applies FIR filter to audio data (linear phase, real-time)"""
+
+    def __init__(self, sample_rate, channels, filter_type='lowpass',
+                 cutoff=3000, num_taps=255, logger=None):
+        super().__init__()
+        self.channels = channels
+        self.logger = logger
+
+        # bandpass인 경우 cutoff가 튜플일 수 있음
+        self.fir = FIRFilter(
+            sample_rate=sample_rate,
+            filter_type=filter_type,
+            cutoff=cutoff,
+            num_taps=num_taps
+        )
+
+        if logger:
+            logger.info(f'FIR Filter initialized: {self.fir}')
+
+    def put(self, data):
+        """Apply FIR filter to audio data"""
+        # bytes -> int16 array
+        audio = np.frombuffer(data, dtype=np.int16)
+
+        if self.channels == 2:
+            # 스테레오: 채널별로 필터링
+            ch1 = audio[0::2]
+            ch2 = audio[1::2]
+            ch1_filtered = self.fir.filter(ch1)
+            ch2_filtered = self.fir.filter(ch2)
+            # 다시 인터리브
+            filtered = np.empty(len(audio), dtype=np.int16)
+            filtered[0::2] = ch1_filtered
+            filtered[1::2] = ch2_filtered
+        else:
+            # 모노
+            filtered = self.fir.filter(audio)
+
+        # int16 -> bytes
+        super().put(filtered.tobytes())
 
 
 class ROS2PublisherSink(Element):
@@ -87,6 +133,14 @@ class MicrophoneNode(Node):
         self.df_topic = self.config_pub.get('pub_audio_df_data', '/edie/audio/df_data')
         self.df_channels = 1
 
+        # Filter parameters
+        self.filter_config = self.config_audio.get('filter', {})
+        self.filter_enabled = bool(self.filter_config.get('name', ''))
+        self.filter_name = self.filter_config.get('name', 'lowpass')
+        self.filter_cutoff = self.filter_config.get('cutoff', 3000)
+        self.filter_cutoff_high = self.filter_config.get('cutoff_high', None)
+        self.filter_taps = self.filter_config.get('taps', 255)
+
 
         # QoS profile for real-time audio streaming
         qos_profile = QoSProfile(
@@ -127,11 +181,37 @@ class MicrophoneNode(Node):
             bits_per_sample=32
         )
 
-        # Create sinks and link to sources
+        # Create sinks
         self.raw_sink = ROS2PublisherSink(self.raw_publisher, self.get_logger(), "raw")
         self.df_sink = ROS2PublisherSink(self.df_publisher, self.get_logger(), "df")
 
-        self.raw_src.link(self.raw_sink)
+        # Create FIR filter element if enabled
+        if self.filter_enabled:
+            # fir_lowpass -> lowpass 변환
+            filter_type = self.filter_name.replace('fir_', '')
+
+            # bandpass인 경우 cutoff 튜플
+            if filter_type == 'bandpass' and self.filter_cutoff_high:
+                cutoff = (self.filter_cutoff, self.filter_cutoff_high)
+            else:
+                cutoff = self.filter_cutoff
+
+            self.raw_filter = FIRFilterElement(
+                sample_rate=self.audio_rate,
+                channels=self.raw_channels,
+                filter_type=filter_type,
+                cutoff=cutoff,
+                num_taps=self.filter_taps,
+                logger=self.get_logger()
+            )
+            # Pipeline: raw_src -> raw_filter -> raw_sink
+            self.raw_src.link(self.raw_filter)
+            self.raw_filter.link(self.raw_sink)
+        else:
+            # No filter: raw_src -> raw_sink
+            self.raw_src.link(self.raw_sink)
+
+        # DeepFilter source -> sink (no additional filtering needed)
         self.df_src.link(self.df_sink)
 
         # Log configuration
@@ -144,6 +224,10 @@ class MicrophoneNode(Node):
         self.get_logger().info(f'  Frame size: {self.audio_frame_size}')
         self.get_logger().info(f'  Topic: {self.raw_topic}')
         self.get_logger().info(f'  Publish Rate: ~{self.audio_rate / self.audio_frame_size:.1f} Hz')
+        if self.filter_enabled:
+            self.get_logger().info(f'  Filter: {self.filter_name} (cutoff={self.filter_cutoff}Hz, taps={self.filter_taps})')
+        else:
+            self.get_logger().info(f'  Filter: None')
         self.get_logger().info('-' * 60)
         self.get_logger().info('[DeepFilter Audio - via parecord]')
         self.get_logger().info(f'  Source: {DF_DEVICE}')
